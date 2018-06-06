@@ -1,0 +1,62 @@
+FROM debian:stretch
+
+MAINTAINER Pablo Carballo v1
+
+RUN echo 'debconf debconf/frontend select Noninteractive' | debconf-set-selections
+
+# Instalando apache, php y librerias necesarias
+RUN apt-get update -y && \
+    apt-get install -y --no-install-recommends apt-utils && \
+    apt-get upgrade -y && \
+    apt-get  install -y wget apt-transport-https lsb-release ca-certificates && \
+    wget -O /etc/apt/trusted.gpg.d/php.gpg https://packages.sury.org/php/apt.gpg && \
+    sh -c 'echo "deb https://packages.sury.org/php/ $(lsb_release -sc) main" > /etc/apt/sources.list.d/php.list' && \
+    apt-get update
+
+# php7.2-mcrypt no tira
+RUN apt-get install -y apache2 && \
+    apt-get install -y php7.2-cli php7.2-common php7.2-fpm php7.2-curl php7.2-gd php7.2-json php7.2-mbstring php7.2-mysql php7.2-opcache php7.2-readline php7.2-xml php7.2-zip && \
+    apt-get install -y libapache2-mod-php zip unzip mysql-client
+
+# Intalando mas utils
+RUN apt-get install -y curl && \
+    apt-get install -y vim && \
+    apt-get install -y nano
+
+# Intalamos laravel
+RUN curl -sS https://getcomposer.org/installer | php -- --install-dir=/usr/local/bin --filename=composer && \
+    composer global require "laravel/installer"
+
+# Linkamos el public a /var/www/html
+
+ENV APP_HOME /var/www/html
+
+RUN rm -r $APP_HOME && \
+    mkdir -p /web/deploy/public && \
+    ln -s /web/deploy/public $APP_HOME
+
+RUN cd /web/deploy/ 
+
+WORKDIR $APP_HOME
+
+# Enable apache mods y shot tags
+RUN a2enmod rewrite && \
+    sed -i 's/short_open_tag = Off/short_open_tag = On/g' /etc/php/7.2/cli/php.ini && \
+    sed -i 's/short_open_tag = Off/short_open_tag = On/g' /etc/php/7.2/fpm/php.ini && \
+    sed -i 's/short_open_tag = Off/short_open_tag = On/g' /etc/php/7.2/apache2/php.ini
+
+# Exponiendo puertos apache
+EXPOSE 80
+
+# Actualizamos default apache con lo creado
+RUN echo "ServerName localhost" >> /etc/apache2/apache2.conf
+ADD debian-apache.conf /etc/apache2/sites-enabled/000-default.conf
+
+# Updateamos composer, generamos key para larval y damos permisos a las carpetas cache de escritura (todo después de q se levante el contenedor, sino pitaría al no existir las carpetas)
+ONBUILD RUN cd /web/deploy/ && \
+            composer update && \
+            php artisan key:generate && \
+            chmod -R 777 /web/deploy/storage /web/deploy/bootstrap
+
+# Reiniciamos apache2
+CMD /usr/sbin/apache2ctl -D FOREGROUND
